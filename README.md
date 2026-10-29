@@ -13,6 +13,18 @@ Halloween scenes rear-projected onto windows that notice when people walk by. A 
 
 In `auto` mode it shows pumpkins in the daytime and rotates through the scary scenes after `--scary-from` (19:00 by default).
 
+## Our setup
+
+- **Computer:** a Raspberry Pi 5 (2 GB) running Raspberry Pi OS. It sits indoors between the two windows and starts the show through a systemd user service.
+- **Projectors:** two [Minikino mini projectors](https://minikino.no/produkter/mini-projektor) (720p, 150 ANSI lumens), one per window. Each connects to one of the Pi's two micro-HDMI ports. They stand inside the house and project onto the window glass, so the image is seen from the street. They can flip the image themselves; otherwise use `--hflip`.
+- **Camera:** a Raspberry Pi Camera Module 3 Wide (about 102°×67°), mounted in the corner of a window and looking out at the street. It finds visitors by motion detection.
+- **Sound:** a JBL Flip 3 Bluetooth speaker plays the voices, thuds and background music.
+- **Control:** the web dashboard on port 8080, opened from a phone on the home network.
+
+The default `--eye-x`, `--cam-height` and `--eye-height` values match our house. Measure your own windows and camera position, then set these options to match.
+
+The Pi renders at 240p and 20 fps (`--render-height 240 --fps 20`). Both projectors are 720p, so the picture is scaled up. Because it's projected onto glass in the dark, the lower resolution isn't noticeable.
+
 ## Running
 
 ```sh
