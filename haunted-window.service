@@ -1,0 +1,15 @@
+[Unit]
+Description=Haunted Window – garage-window Halloween projections
+After=graphical-session.target pipewire.service
+
+[Service]
+WorkingDirectory=%h/haunted-window
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=SDL_VIDEODRIVER=wayland
+Environment=PULSE_LATENCY_MSEC=120
+ExecStart=%h/haunted-window/.venv/bin/python main.py --render-height 240 --fps 20
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

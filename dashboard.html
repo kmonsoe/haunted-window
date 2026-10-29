@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Haunted Window</title>
+<style>
+  :root {
+    --bg: #0d0b0e; --panel: #17131a; --line: #2a2230; --text: #ece6ef; --muted: #8e8396;
+    --accent: #ff6a1a; --blood: #c4142b; --ok: #49d17d; --warn: #f0b429;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  .pill { padding: 3px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--line); }
+  .pill.tracking { background: var(--blood); }
+  .pill.idle { background: #5a3d12; }
+  .pill.offline { background: #444; color: var(--muted); }
+  main { display: grid; gap: 14px; padding: 14px 16px 40px; max-width: 1200px; margin: 0 auto; grid-template-columns: 1fr; }
+  @media (min-width: 900px) { main { grid-template-columns: 3fr 2fr; } .wide { grid-column: 1 / -1; } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-width: 0; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+  img.feed { width: 100%; display: block; border-radius: 8px; background: #000; aspect-ratio: 16 / 9; object-fit: contain; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+  .stat { background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--blood); width: 0; transition: width .3s; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; color: var(--text); background: var(--line); border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+  button:hover { background: #3a3042; }
+  button:active { transform: scale(.97); }
+  button.big { background: var(--accent); color: #1a0d05; font-weight: 700; font-size: 17px; padding: 14px 22px; }
+  button.red { background: var(--blood); }
+  .clips h3 { font-size: 13px; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+  .clips button { padding: 7px 10px; font-size: 13px; }
+  .row { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  input[type=range] { flex: 1; accent-color: var(--accent); min-width: 120px; }
+  svg { width: 100%; display: block; background: var(--bg); border-radius: 8px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .seg { display: inline-flex; background: var(--bg); border-radius: 9px; padding: 3px; gap: 3px; }
+  .seg button { background: transparent; padding: 7px 12px; font-size: 14px; }
+  .seg button.on { background: var(--accent); color: #1a0d05; font-weight: 600; }
+  .setting { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--line); }
+  .setting:first-of-type { border-top: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎃 Haunted Window</h1>
+  <span id="mode" class="pill offline">offline</span>
+</header>
+<main>
+  <section>
+    <h2>Camera</h2>
+    <img class="feed" src="/camera.mjpg" alt="camera">
+    <p class="muted">Red = motion, green box = person being tracked.</p>
+  </section>
+  <section>
+    <h2>Actions</h2>
+    <div class="buttons">
+      <button class="big" data-action="laugh">😈 Laugh</button>
+      <button data-action="wake">👁 Wake up</button>
+      <button data-action="sleep">😴 Sleep</button>
+      <button class="red" data-action="demon">🔥 Demon / scare (12 s)</button>
+      <button class="red" data-action="bleed">🩸 Bleed (25 s)</button>
+      <button data-action="calm">Calm down</button>
+    </div>
+    <h2 style="margin-top:16px">Music</h2>
+    <div class="buttons">
+      <button data-action="music" id="musicBtn">⏯ Pause</button>
+      <button data-action="next_track">⏭ Next</button>
+    </div>
+    <div class="row"><span class="muted">Volume</span><input type="range" id="volume" min="0" max="1" step="0.05"></div>
+    <p class="muted" id="track"></p>
+    <h2 style="margin-top:16px">Scene</h2>
+    <div class="seg" data-setting="scene" style="flex-wrap:wrap">
+      <button data-value="auto">🔁 Auto</button><button data-value="eyes">👁 Eyes</button><button data-value="hands">🖐 Hands</button><button data-value="figure">👤 Figure</button><button data-value="pumpkins">🎃 Pumpkins</button>
+    </div>
+    <p class="muted" id="sceneNow">Auto: pumpkins until 19:00, after that eyes, hands and figure rotate every second visitor. 🔥 Demon scares in every scene.</p>
+    <h2 style="margin-top:16px">Settings</h2>
+    <div class="setting"><span>Skin</span>
+      <div class="seg" data-setting="skin">
+        <button data-value="gore">🩸 Flesh</button><button data-value="pale">Normal</button>
+      </div></div>
+    <div class="setting"><span>Camera</span>
+      <div class="seg" data-setting="camera_flip">
+        <button data-value="false">Normal</button><button data-value="true">Upside down</button>
+      </div></div>
+    <p class="muted">One projector shows both eyes, two projectors get one eye each. Settings are remembered after restart.</p>
+  </section>
+  <section>
+    <h2>What the projectors show</h2>
+    <img class="feed" id="eyes" alt="eyes">
+  </section>
+  <section>
+    <h2>Status</h2>
+    <div class="stats">
+      <div class="stat"><b id="visitors">–</b><span>visitors</span></div>
+      <div class="stat"><b id="dist">–</b><span>distance</span></div>
+      <div class="stat"><b id="fps">–</b><span>fps</span></div>
+      <div class="stat"><b id="temp">–</b><span>CPU temp</span></div>
+      <div class="stat"><b id="camera">–</b><span>camera</span></div>
+      <div class="stat"><b id="uptime">–</b><span>uptime</span></div>
+      <div class="stat"><b id="demon">–</b><span>demon</span><div class="bar"><i id="demonBar"></i></div></div>
+      <div class="stat"><b id="veins">–</b><span>veins / stare</span><div class="bar"><i id="veinsBar"></i></div></div>
+    </div>
+    <p class="muted" id="lastClip"></p>
+    <svg id="map" viewBox="0 0 320 170" aria-label="street map"></svg>
+  </section>
+  <section class="wide clips">
+    <h2>Sounds</h2>
+    <div id="clips" class="muted">Loading…</div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const post = (action, arg) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, arg }) });
+
+document.querySelectorAll("[data-action]").forEach(b => b.onclick = () => post(b.dataset.action));
+document.querySelectorAll("[data-setting]").forEach(seg => seg.querySelectorAll("button").forEach(b => b.onclick = () => {
+  const v = b.dataset.value;
+  post(seg.dataset.setting, v === "true" ? true : v === "false" ? false : v);
+  seg.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+}));
+function renderSettings(settings) {
+  document.querySelectorAll("[data-setting]").forEach(seg => {
+    const v = String(settings[seg.dataset.setting]);
+    seg.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.value === v));
+  });
+}
+let volumeTimer, dragging = false;
+$("volume").oninput = e => { dragging = true; clearTimeout(volumeTimer); volumeTimer = setTimeout(() => { post("volume", +e.target.value); dragging = false; }, 150); };
+
+const kinds = { wake: "Wake up", close: "Close", ambient: "Ambient", demon: "Demon" };
+let clipsKey = "";
+function renderClips(clips) {
+  const key = JSON.stringify(clips);
+  if (key === clipsKey) return;
+  clipsKey = key;
+  const root = $("clips");
+  root.textContent = "";
+  root.className = "";
+  for (const [kind, names] of Object.entries(clips)) {
+    const h = document.createElement("h3");
+    h.textContent = kinds[kind] || kind;
+    const row = document.createElement("div");
+    row.className = "buttons";
+    const any = document.createElement("button");
+    any.textContent = "🎲 Random";
+    any.onclick = () => post("say", kind);
+    row.append(any);
+    for (const n of names) {
+      const b = document.createElement("button");
+      b.textContent = n.replace(/\.(mp3|wav|ogg)$/, "").replaceAll("-", " ");
+      b.onclick = () => post("clip", kind + "/" + n);
+      row.append(b);
+    }
+    root.append(h, row);
+  }
+  if (!Object.keys(clips).length) { root.className = "muted"; root.textContent = "No audio device."; }
+}
+
+function drawMap(s) {
+  const X = x => 160 + x * 18, Z = z => 14 + z * 15;
+  let svg = `<line x1="0" y1="14" x2="320" y2="14" stroke="#3a3042" stroke-width="3"/>`;
+  for (let z = 2; z <= 10; z += 2) svg += `<line x1="0" y1="${Z(z)}" x2="320" y2="${Z(z)}" stroke="#1f1a24"/><text x="4" y="${Z(z) - 2}" fill="#5c5266" font-size="9">${z} m</text>`;
+  for (const x of s.eyes) svg += `<circle cx="${X(x)}" cy="14" r="7" fill="#ff6a1a"/>`;
+  svg += `<circle cx="${X(0)}" cy="14" r="4" fill="#5aa0ff"/>`;
+  if (s.person) {
+    for (const x of s.eyes) svg += `<line x1="${X(x)}" y1="14" x2="${X(s.person.x)}" y2="${Z(s.person.z)}" stroke="#ff6a1a" stroke-opacity=".5"/>`;
+    svg += `<circle cx="${X(s.person.x)}" cy="${Z(s.person.z)}" r="7" fill="#49d17d"/>`;
+  }
+  $("map").innerHTML = svg;
+}
+
+const fmtTime = s => s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} m`;
+
+async function poll() {
+  try {
+    const s = await (await fetch("/status")).json();
+    const mode = $("mode");
+    mode.textContent = [s.scene, s.mode, s.script].filter(Boolean).join(" · ");
+    mode.className = "pill " + s.mode;
+    $("visitors").textContent = s.visitors;
+    $("dist").textContent = s.person ? s.person.z.toFixed(1) + " m" : "–";
+    $("fps").textContent = s.fps.toFixed(0);
+    $("temp").textContent = s.temp == null ? "–" : s.temp.toFixed(0) + "°";
+    $("temp").style.color = s.temp > 75 ? "var(--blood)" : s.temp > 65 ? "var(--warn)" : "";
+    $("camera").textContent = s.camera_age == null ? "sim" : s.camera_age < 1 ? "ok" : "stalled";
+    $("camera").style.color = s.camera_age != null && s.camera_age >= 1 ? "var(--blood)" : "var(--ok)";
+    $("uptime").textContent = fmtTime(s.uptime);
+    $("demon").textContent = Math.round(s.demon * 100) + "%";
+    $("demonBar").style.width = s.demon * 100 + "%";
+    $("veins").textContent = `${Math.round(s.veins * 100)}% · ${s.stare.toFixed(0)} s` + (s.bleeding ? " 🩸" : "");
+    $("veinsBar").style.width = s.veins * 100 + "%";
+    $("lastClip").textContent = s.last_clip ? "Last sound: " + s.last_clip : "";
+    $("track").textContent = s.track ? (s.music_paused ? "Paused: " : "Playing: ") + s.track : "";
+    $("musicBtn").textContent = s.music_paused ? "▶ Play" : "⏸ Pause";
+    if (!dragging && s.volume != null) $("volume").value = s.volume;
+    renderClips(s.clips);
+    renderSettings(s.settings);
+    drawMap(s);
+  } catch {
+    $("mode").textContent = "offline";
+    $("mode").className = "pill offline";
+  }
+  setTimeout(poll, 500);
+}
+poll();
+
+const eyes = $("eyes");
+const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) eyes.src = "/eyes.mjpg"; else eyes.removeAttribute("src"); });
+io.observe(eyes);
+</script>
+</body>
+</html>

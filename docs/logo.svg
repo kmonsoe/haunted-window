@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" width="640" height="400">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="42%" r="65%">
+      <stop offset="0" stop-color="#ffb347"/>
+      <stop offset="0.45" stop-color="#e2611b"/>
+      <stop offset="1" stop-color="#3a0d06"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ff8a2a" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ff8a2a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="eye" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#fff6c8"/>
+      <stop offset="0.35" stop-color="#ffd23a"/>
+      <stop offset="1" stop-color="#ff5a00" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="night" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#140a1f"/>
+      <stop offset="1" stop-color="#07040b"/>
+    </linearGradient>
+    <clipPath id="pane">
+      <path d="M126 330 V150 a74 74 0 0 1 148 0 V330 Z"/>
+    </clipPath>
+  </defs>
+  <rect width="640" height="400" rx="36" fill="url(#night)"/>
+  <ellipse cx="200" cy="215" rx="150" ry="160" fill="url(#halo)"/>
+  <g clip-path="url(#pane)">
+    <rect x="120" y="70" width="160" height="270" fill="url(#glow)"/>
+    <path d="M168 330 C166 280 172 250 184 230 C176 214 176 192 190 182 C192 168 208 162 216 172 C230 176 234 196 226 214 C238 236 238 290 232 330 Z" fill="#12070a" opacity="0.92"/>
+    <ellipse cx="196" cy="200" rx="7" ry="4.5" fill="url(#eye)"/>
+    <ellipse cx="218" cy="200" rx="7" ry="4.5" fill="url(#eye)"/>
+    <circle cx="196" cy="200" r="1.8" fill="#2a0500"/>
+    <circle cx="218" cy="200" r="1.8" fill="#2a0500"/>
+    <g fill="#7a0a10" opacity="0.85" transform="translate(236 252) rotate(14)">
+      <ellipse cx="0" cy="14" rx="15" ry="17"/>
+      <rect x="-14" y="-16" width="6" height="24" rx="3"/>
+      <rect x="-6" y="-22" width="6" height="30" rx="3"/>
+      <rect x="2" y="-20" width="6" height="28" rx="3"/>
+      <rect x="10" y="-12" width="5.5" height="22" rx="2.75"/>
+      <rect x="12" y="8" width="5.5" height="16" rx="2.75" transform="rotate(-40 14 16)"/>
+      <rect x="-12" y="8" width="2.5" height="22" rx="1.25"/>
+      <rect x="3" y="6" width="2" height="30" rx="1"/>
+    </g>
+  </g>
+  <path d="M126 330 V150 a74 74 0 0 1 148 0 V330 Z" fill="none" stroke="#2b1a14" stroke-width="12"/>
+  <path d="M200 76 V330 M126 214 H274" stroke="#2b1a14" stroke-width="8"/>
+  <rect x="108" y="328" width="184" height="16" rx="4" fill="#3a241a"/>
+  <g transform="translate(262 318)">
+    <ellipse cx="0" cy="0" rx="22" ry="17" fill="#e86a10"/>
+    <ellipse cx="-8" cy="0" rx="10" ry="16" fill="#f07c1c"/>
+    <ellipse cx="8" cy="0" rx="10" ry="16" fill="#d65e0c"/>
+    <rect x="-2" y="-22" width="5" height="8" rx="2" fill="#4a6b1f"/>
+    <path d="M-12 -4 l5 -6 l5 6 Z M3 -4 l5 -6 l5 6 Z" fill="#ffe27a"/>
+    <path d="M-12 5 Q0 14 12 5 L8 6 L5 9 L2 6 L-2 9 L-5 6 L-8 8 Z" fill="#ffe27a"/>
+  </g>
+  <text x="330" y="190" font-family="Georgia, 'Times New Roman', serif" font-size="58" font-weight="700" fill="#f3e9dc" letter-spacing="2">Haunted</text>
+  <text x="330" y="252" font-family="Georgia, 'Times New Roman', serif" font-size="58" font-weight="700" fill="#ff8a2a" letter-spacing="2">Window</text>
+  <text x="333" y="290" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#9b8aa8" letter-spacing="1">Halloween scenes that watch back</text>
+</svg>
