@@ -1,14 +1,13 @@
 import math
 import os
 import random
-import time
 
 import numpy as np
 import pygame
 
 from eye import ASSETS, approach, blur_up
 
-SCENES = ("eyes", "hands", "figure", "pumpkins")
+SCENES = ("eyes", "hands", "figure", "pumpkins", "breach", "spiders")
 
 
 def tracked(brain):
@@ -580,19 +579,536 @@ class Pumpkins(Scene):
             pygame.draw.rect(surf, sample[:3] if sample[0] > 40 else tooth, rect)
 
 
-class Director:
-    ROTATION = ("eyes", "hands", "figure")
+def make_cracks(cx, cy, radius, seed):
+    rng = random.Random(seed)
+    num_radials = rng.randint(8, 12)
+    radials = []
+    for i in range(num_radials):
+        base_angle = (i / num_radials) * 2 * math.pi + rng.uniform(-0.15, 0.15)
+        branch_len = radius * rng.uniform(0.7, 1.1)
+        steps = rng.randint(4, 7)
+        pts = [(cx, cy)]
+        curr_x, curr_y = cx, cy
+        curr_ang = base_angle
+        step_len = branch_len / steps
+        for _ in range(steps):
+            curr_ang += rng.uniform(-0.25, 0.25)
+            curr_x += math.cos(curr_ang) * step_len
+            curr_y += math.sin(curr_ang) * step_len
+            pts.append((curr_x, curr_y))
+        radials.append(pts)
 
-    def __init__(self, scary_from):
-        self.scary_from = scary_from
+    arcs = []
+    rings = rng.randint(2, 4)
+    for r_idx in range(1, rings + 1):
+        frac = r_idx / (rings + 1) * rng.uniform(0.85, 1.15)
+        for i in range(num_radials):
+            if rng.random() < 0.8:
+                next_i = (i + 1) % num_radials
+                p1_step = min(len(radials[i]) - 1, int(frac * len(radials[i])))
+                p2_step = min(len(radials[next_i]) - 1, int(frac * len(radials[next_i])))
+                pt1 = radials[i][p1_step]
+                pt2 = radials[next_i][p2_step]
+                mid_x = (pt1[0] + pt2[0]) / 2 + rng.uniform(-3, 3)
+                mid_y = (pt1[1] + pt2[1]) / 2 + rng.uniform(-3, 3)
+                arcs.append([pt1, (mid_x, mid_y), pt2])
+    return radials, arcs
+
+
+class ContainmentBreach(Scene):
+    NEAR = 2.8
+
+    def __init__(self, geometry, window_width):
+        super().__init__(geometry, window_width)
+        ex = geometry.eye_x
+        self.x = (min(ex) + max(ex)) / 2
+        self.target_x = self.x
+        self.depth = self.depth_target = 0.85
+        self.look = [0.0, 0.0]
+        self.alarm_phase = 0.0
+        self.strobe = 0.0
+        self.next_slam = 0.0
+        self.next_wander = 2.0
+        self.next_lurk = 15.0
+        self.slam_active = []
+        self.cracks = []
+        self.layers = {}
+        self.frames = {}
+        self.backdrops = {}
+        self.shake = 0.0
+        self._scaled = {}
+
+    def scaled_asset(self, name, size):
+        key = (name, size)
+        if key not in self._scaled:
+            if len(self._scaled) > 64:
+                self._scaled.clear()
+            src = asset(name)
+            self._scaled[key] = pygame.transform.smoothscale(src, size)
+        return self._scaled[key]
+
+    def slam(self, i, x, y, sounds, heavy=True):
+        self.slam_active.append({
+            "i": i, "x": x, "y": y, "born": self.t, "hold": 1.4, "heavy": heavy,
+            "flip": random.random() < 0.5, "angle": random.uniform(-14, 14)
+        })
+        self.cracks.append({
+            "i": i, "x": x, "y": y, "radius": random.uniform(60, 105), "seed": random.randrange(1 << 30),
+            "born": self.t, "lines": None
+        })
+        sounds.thud(1.0 if heavy else 0.5)
+        self.shake = 7.0 if heavy else 2.5
+
+    def update(self, dt, brain, sounds):
+        super().update(dt, brain, sounds)
+        p = tracked(brain)
+        scare = brain.demon > 0.3
+        speed = 2.6 if scare else (1.1 if p else 0.4)
+
+        if p is not None:
+            w_idx = self.nearest_window(p.x)
+            ex = self.geometry.eye_x[w_idx]
+            self.target_x = ex + clamp((p.x - ex) * 0.4, -0.25, 0.25)
+            self.depth_target = clamp((p.z - 1.2) / 4.0, 0.05, 0.85)
+            gaze = self.geometry.gaze(p, w_idx)
+            self.look[0] = approach(self.look[0], gaze[0], 5, dt)
+            self.look[1] = approach(self.look[1], gaze[1], 5, dt)
+        else:
+            if scare:
+                self.target_x = self.geometry.eye_x[self.nearest_window(self.x)]
+            elif self.t >= self.next_wander:
+                self.target_x = random.choice(self.geometry.eye_x) + random.uniform(-0.2, 0.2)
+                self.depth_target = random.uniform(0.5, 0.9)
+                self.next_wander = self.t + random.uniform(4, 10)
+            self.look[0] = approach(self.look[0], 0.0, 2, dt)
+            self.look[1] = approach(self.look[1], 0.2, 2, dt)
+
+        dx = self.target_x - self.x
+        if abs(dx) > 0.01:
+            self.x += clamp(dx, -speed * dt, speed * dt)
+
+        target_depth = 0.0 if scare else self.depth_target
+        self.depth = approach(self.depth, target_depth, 10 if scare else 1.2, dt)
+
+        beacon_speed = 14.0 if scare else (4.0 if p else 1.8)
+        self.alarm_phase += dt * beacon_speed
+        strobe_target = random.uniform(0.7, 1.0) if (scare and random.random() < 0.35) else 0.0
+        self.strobe = approach(self.strobe, strobe_target, 25, dt)
+        self.shake = approach(self.shake, 0.0, 12, dt)
+
+        near_trigger = p is not None and p.z < self.NEAR
+        if (scare or near_trigger) and self.t >= self.next_slam:
+            target_i = self.nearest_window(p.x if p else self.x)
+            ex = self.geometry.eye_x[target_i]
+            hit_x = ex + random.uniform(-0.15, 0.15)
+            hit_y = self.geometry.eye_height + random.uniform(-0.1, 0.1)
+            self.slam(target_i, hit_x, hit_y, sounds, heavy=True)
+            self.next_slam = self.t + random.uniform(3.0, 6.5)
+        elif not scare and p is None and self.t >= self.next_lurk:
+            target_i = random.randrange(len(self.geometry.eye_x))
+            ex = self.geometry.eye_x[target_i]
+            self.slam(target_i, ex + random.uniform(-0.2, 0.2), self.geometry.eye_height + random.uniform(-0.15, 0.15), sounds, heavy=False)
+            self.next_lurk = self.t + random.uniform(25.0, 60.0)
+
+        self.slam_active = [s for s in self.slam_active if self.t - s["born"] < s["hold"] + 0.5]
+        self.cracks = [c for c in self.cracks if self.t - c["born"] < 60.0]
+
+    def backdrop(self, size):
+        if size not in self.backdrops:
+            w, h = size
+            x, y = np.mgrid[0:w, 0:h].astype(np.float32)
+            nx, ny = (x / w - 0.5) * 2, (y / h - 0.4) * 2
+            r2 = nx * nx + ny * ny
+            vignette = np.clip(1.0 - 0.65 * r2, 0.05, 1.0)
+            rng = np.random.default_rng(17)
+            grain = 0.92 + 0.08 * rng.random((w, h))
+            rgb = np.array((14, 16, 22), np.float32) * (vignette * grain)[..., None]
+            self.backdrops[size] = pygame.surfarray.make_surface(np.clip(rgb, 0, 255).astype(np.uint8))
+        return self.backdrops[size]
+
+    def frame(self, size):
+        if size not in self.frames:
+            w, h = size
+            frame_surf = pygame.Surface(size, pygame.SRCALPHA)
+            bw = max(10, int(w * 0.075))
+            bh = max(10, int(h * 0.075))
+            frame_col = (34, 38, 44)
+            bevel_col = (65, 72, 82)
+            shadow_col = (14, 16, 20)
+
+            pygame.draw.rect(frame_surf, frame_col, (0, 0, w, bh))
+            pygame.draw.rect(frame_surf, frame_col, (0, h - bh, w, bh))
+            pygame.draw.rect(frame_surf, frame_col, (0, 0, bw, h))
+            pygame.draw.rect(frame_surf, frame_col, (w - bw, 0, bw, h))
+
+            pygame.draw.line(frame_surf, shadow_col, (bw, bh), (w - bw, bh), 2)
+            pygame.draw.line(frame_surf, shadow_col, (bw, bh), (bw, h - bh), 2)
+            pygame.draw.line(frame_surf, bevel_col, (bw, h - bh), (w - bw, h - bh), 2)
+            pygame.draw.line(frame_surf, bevel_col, (w - bw, bh), (w - bw, h - bh), 2)
+
+            c_size = int(bw * 1.5)
+            for cx0, cy0, sx, sy in ((0, 0, 1, 1), (w, 0, -1, 1), (0, h, 1, -1), (w, h, -1, -1)):
+                poly = [(cx0, cy0), (cx0 + sx * c_size, cy0), (cx0, cy0 + sy * c_size)]
+                pygame.draw.polygon(frame_surf, (44, 49, 56), poly)
+                pygame.draw.polygon(frame_surf, bevel_col, poly, 1)
+                bx = cx0 + sx * (c_size * 0.38)
+                by = cy0 + sy * (c_size * 0.38)
+                pygame.draw.circle(frame_surf, (85, 92, 105), (round(bx), round(by)), max(2, int(bw * 0.12)))
+
+            stripe_w = max(12, int(w * 0.045))
+            for x in range(bw, w - bw + stripe_w, stripe_w):
+                poly = [(x, h - bh), (x + stripe_w // 2, h - bh), (x - stripe_w // 2, h), (x - stripe_w, h)]
+                pygame.draw.polygon(frame_surf, (190, 140, 15), poly)
+
+            num_bars = 3
+            spacing = (w - 2 * bw) / (num_bars + 1)
+            bar_w = max(4, int(w * 0.024))
+            for b in range(1, num_bars + 1):
+                bar_x = bw + b * spacing
+                pygame.draw.rect(frame_surf, (35, 38, 45), (bar_x - bar_w // 2, bh, bar_w, h - 2 * bh))
+                pygame.draw.line(frame_surf, (75, 84, 98), (bar_x - bar_w // 2 + 1, bh), (bar_x - bar_w // 2 + 1, h - bh), max(1, bar_w // 3))
+                pygame.draw.line(frame_surf, (15, 17, 20), (bar_x + bar_w // 2, bh), (bar_x + bar_w // 2, h - bh), 1)
+
+            self.frames[size] = frame_surf
+        return self.frames[size]
+
+    def crack_layer(self, i, size):
+        entry = self.layers.get(i)
+        if entry is None or entry[0].get_size() != size:
+            surf = pygame.Surface(size, pygame.SRCALPHA)
+            surf.fill((0, 0, 0, 0))
+            entry = self.layers[i] = [surf, self.t]
+        if self.t - entry[1] > 0.8:
+            entry[0].fill((255, 255, 255, 250), special_flags=pygame.BLEND_RGBA_MULT)
+            entry[1] = self.t
+        return entry[0]
+
+    def draw(self, surf, i):
+        size = surf.get_size()
+        w, h = size
+        surf.blit(self.backdrop(size), (0, 0))
+        to_px, ppm = self.projection(size, i)
+        ex = self.geometry.eye_x[i]
+
+        shake_ox = random.uniform(-self.shake, self.shake) if self.shake > 0.1 else 0
+        shake_oy = random.uniform(-self.shake, self.shake) if self.shake > 0.1 else 0
+
+        alarm_sin = 0.5 + 0.5 * math.sin(self.alarm_phase + i * 1.5)
+        red_ambient = int(35 * alarm_sin + 140 * self.strobe)
+        if red_ambient > 0:
+            surf.fill((red_ambient, int(8 * alarm_sin), int(6 * alarm_sin)), special_flags=pygame.BLEND_ADD)
+
+        if abs(self.x - ex) < self.window_width / 2 + 0.8:
+            scale = (1.0 - 0.35 * self.depth) * 1.15
+            cx, cy = to_px(self.x, self.geometry.eye_height - 0.08)
+            cx += shake_ox
+            cy += shake_oy
+
+            breath = math.sin(self.t * 2.2) * 4 * scale
+            beast_h = max(16, round(0.85 * ppm * scale + breath))
+            beast_w = beast_h
+
+            beast_img = self.scaled_asset("beast-torso.png", (beast_w, beast_h))
+
+            blur_level = round(self.depth * 3.5)
+            if blur_level > 0:
+                small_size = (max(4, w // 2), max(4, h // 2))
+                small_surf = pygame.Surface(small_size, pygame.SRCALPHA)
+                small_surf.fill((0, 0, 0, 0))
+                small_surf.blit(beast_img, ((cx - beast_w // 2) / 2, (cy - beast_h // 2) / 2))
+                surf.blit(blur_up(small_surf, size, blur_level), (0, 0))
+            else:
+                surf.blit(beast_img, (cx - beast_w // 2, cy - beast_h // 2))
+
+            eye_bright = (1.0 - 0.5 * self.depth) * (0.8 + 0.4 * alarm_sin + 0.5 * self.strobe)
+            inner_col = (min(255, int(255 * eye_bright)), min(255, int(85 * eye_bright)), 10)
+            glow_col = (int(150 * eye_bright), 15, 5)
+            lx, ly = self.look
+
+            for side in (-1, 1):
+                ex_pt = cx + side * (beast_w * 0.09) + lx * 4
+                ey_pt = cy - (beast_h * 0.12) + ly * 3
+                pygame.draw.circle(surf, glow_col, (round(ex_pt), round(ey_pt)), max(2, round(10 * scale)))
+                pygame.draw.circle(surf, inner_col, (round(ex_pt), round(ey_pt)), max(1, round(4 * scale)))
+                pygame.draw.circle(surf, (255, 245, 200), (round(ex_pt), round(ey_pt)), max(1, round(1.8 * scale)))
+
+        for s in self.slam_active:
+            if s["i"] != i:
+                continue
+            age = self.t - s["born"]
+            if age > s["hold"] + 0.4:
+                continue
+            alpha = 1.0 if age < s["hold"] else max(0.0, 1.0 - (age - s["hold"]) / 0.4)
+            cx, cy = to_px(s["x"], s["y"])
+
+            pop = 1.0 + 0.15 * max(0.0, 1.0 - age / 0.1)
+            claw_h = round(0.32 * ppm * pop)
+            claw_w = claw_h
+            claw_img = self.scaled_asset("claw-monster.png", (claw_w, claw_h))
+            if s["flip"]:
+                claw_img = pygame.transform.flip(claw_img, True, False)
+            if s["angle"]:
+                claw_img = pygame.transform.rotate(claw_img, s["angle"])
+            if alpha < 0.99:
+                claw_img = claw_img.copy()
+                claw_img.set_alpha(int(255 * alpha))
+
+            surf.blit(claw_img, claw_img.get_rect(center=(cx + shake_ox, cy + shake_oy)))
+
+        surf.blit(self.frame(size), (0, 0))
+
+        layer = self.crack_layer(i, size)
+        for c in self.cracks:
+            if c["i"] != i:
+                continue
+            if c["lines"] is None:
+                cx, cy = to_px(c["x"], c["y"])
+                c["lines"] = make_cracks(cx, cy, c["radius"], c["seed"])
+                radials, arcs = c["lines"]
+                for r in radials:
+                    pygame.draw.lines(layer, (150, 200, 230, 80), False, [(round(x), round(y)) for x, y in r], 3)
+                    pygame.draw.lines(layer, (240, 250, 255, 235), False, [(round(x), round(y)) for x, y in r], 1)
+                for a in arcs:
+                    pygame.draw.lines(layer, (150, 200, 230, 70), False, [(round(x), round(y)) for x, y in a], 2)
+                    pygame.draw.lines(layer, (230, 245, 255, 210), False, [(round(x), round(y)) for x, y in a], 1)
+                pygame.draw.circle(layer, (230, 245, 255, 190), (round(cx), round(cy)), 12)
+                pygame.draw.circle(layer, (255, 255, 255, 255), (round(cx), round(cy)), 6)
+
+        surf.blit(layer, (shake_ox, shake_oy))
+
+
+def draw_corner_web(surf, corner, radius, num_radials=8, rings=6):
+    cx, cy = corner
+    dx = -1 if cx > 0 else 1
+    dy = -1 if cy > 0 else 1
+    if cx == 0 and cy == 0:
+        angles = [(i / (num_radials - 1)) * (math.pi / 2) for i in range(num_radials)]
+    else:
+        angles = [math.pi / 2 + (i / (num_radials - 1)) * (math.pi / 2) for i in range(num_radials)]
+
+    for a in angles:
+        ex = cx + math.cos(a) * radius
+        ey = cy + math.sin(a) * radius
+        pygame.draw.line(surf, (160, 180, 205, 55), (cx, cy), (ex, ey), 1)
+
+    for r_idx in range(1, rings + 1):
+        r = radius * (r_idx / rings) ** 1.25
+        pts = [(cx + math.cos(a) * r, cy + math.sin(a) * r) for a in angles]
+        for i in range(len(pts) - 1):
+            p1 = pts[i]
+            p2 = pts[i + 1]
+            mid_x = (p1[0] + p2[0]) / 2 - (p1[0] + p2[0] - 2 * cx) * 0.08
+            mid_y = (p1[1] + p2[1]) / 2 - (p1[1] + p2[1] - 2 * cy) * 0.08
+            pygame.draw.lines(surf, (175, 195, 215, 70), False, [p1, (mid_x, mid_y), p2], 1)
+
+
+class SpiderNest(Scene):
+    NEAR = 2.5
+
+    def __init__(self, geometry, window_width):
+        super().__init__(geometry, window_width)
+        ex = geometry.eye_x
+        self.x = (min(ex) + max(ex)) / 2
+        self.target_x = self.x
+        self.ey = geometry.eye_height
+        self.y = self.ey + 0.38
+        self.target_y = self.y
+        self.aggro = 0.0
+        self.walk_phase = 0.0
+        self.tap_phase = 0.0
+        self.dropping = False
+        self.retreat_at = 0.0
+        self.next_lurk = 2.0
+        self.look = [0.0, 0.0]
+        self.webs = {}
+        self.backdrops = {}
+        self._scaled = {}
+
+        self.small_spiders = []
+        for i in range(len(ex)):
+            for _ in range(6):
+                self.small_spiders.append({
+                    "w": i,
+                    "x": ex[i] + random.uniform(-0.4, 0.4) * window_width,
+                    "y": self.ey + random.uniform(-0.35, 0.35),
+                    "tx": ex[i] + random.uniform(-0.4, 0.4) * window_width,
+                    "ty": self.ey + random.uniform(-0.35, 0.35),
+                    "speed": random.uniform(0.12, 0.28),
+                    "size": random.uniform(2.5, 4.5),
+                    "phase": random.uniform(0, 10),
+                    "pause": random.uniform(0.5, 2.5),
+                })
+
+    def scaled_asset(self, name, size):
+        key = (name, size)
+        if key not in self._scaled:
+            if len(self._scaled) > 64:
+                self._scaled.clear()
+            src = asset(name)
+            self._scaled[key] = pygame.transform.smoothscale(src, size)
+        return self._scaled[key]
+
+    def update(self, dt, brain, sounds):
+        super().update(dt, brain, sounds)
+        p = tracked(brain)
+        scare = brain.demon > 0.3
+        ex = self.geometry.eye_x
+
+        near_trigger = p is not None and p.z < self.NEAR
+        want_drop = scare or near_trigger
+
+        if p is not None:
+            w_idx = self.nearest_window(p.x)
+            self.target_x = ex[w_idx] + clamp((p.x - ex[w_idx]) * 0.3, -0.2, 0.2)
+            gaze = self.geometry.gaze(p, w_idx)
+            self.look[0] = approach(self.look[0], gaze[0], 5, dt)
+            self.look[1] = approach(self.look[1], gaze[1], 5, dt)
+        else:
+            if self.t >= self.next_lurk and not self.dropping:
+                self.target_x = random.choice(ex) + random.uniform(-0.25, 0.25)
+                self.next_lurk = self.t + random.uniform(5, 14)
+            self.look[0] = approach(self.look[0], 0.0, 2, dt)
+            self.look[1] = approach(self.look[1], 0.2, 2, dt)
+
+        dx = self.target_x - self.x
+        speed_x = 2.2 if want_drop else (0.8 if p else 0.3)
+        if abs(dx) > 0.01:
+            self.x += clamp(dx, -speed_x * dt, speed_x * dt)
+            self.walk_phase += dt * 10 * speed_x
+
+        if want_drop:
+            if not self.dropping and self.t > self.retreat_at:
+                self.dropping = True
+                self.retreat_at = self.t + random.uniform(2.5, 4.0)
+                sounds.thud(0.7)
+            self.target_y = self.ey - 0.05
+        else:
+            if self.t > self.retreat_at:
+                self.dropping = False
+                self.target_y = self.ey + 0.35 if not p else self.ey + 0.12
+
+        drop_rate = 14 if (self.target_y < self.y) else 2.5
+        self.y = approach(self.y, self.target_y, drop_rate, dt)
+
+        target_aggro = 1.0 if self.dropping else (0.4 if p else 0.0)
+        self.aggro = approach(self.aggro, target_aggro, 8 if self.dropping else 1.5, dt)
+        if self.aggro > 0.3:
+            self.tap_phase += dt * 30
+
+        for s in self.small_spiders:
+            if scare:
+                s["tx"] = ex[s["w"]] + (0.45 * self.window_width if random.random() < 0.5 else -0.45 * self.window_width)
+                s["ty"] = self.ey + (0.4 if random.random() < 0.5 else -0.4)
+                s["pause"] = 0.0
+            elif self.t >= s["pause"]:
+                s["tx"] = ex[s["w"]] + random.uniform(-0.4, 0.4) * self.window_width
+                s["ty"] = self.ey + random.uniform(-0.35, 0.35)
+                s["pause"] = self.t + random.uniform(1.5, 5.0)
+
+            sdx = s["tx"] - s["x"]
+            sdy = s["ty"] - s["y"]
+            dist = math.hypot(sdx, sdy)
+            move_speed = s["speed"] * (2.8 if scare else 1.0)
+            if dist > 0.02:
+                step = min(dist, move_speed * dt)
+                s["x"] += (sdx / dist) * step
+                s["y"] += (sdy / dist) * step
+                s["phase"] += dt * 14 * move_speed
+
+    def backdrop(self, size):
+        if size not in self.backdrops:
+            w, h = size
+            x, y = np.mgrid[0:w, 0:h].astype(np.float32)
+            nx, ny = (x / w - 0.5) * 2, (y / h - 0.35) * 2
+            vignette = np.clip(1.0 - 0.55 * (nx * nx + ny * ny), 0.08, 1.0)
+            rng = np.random.default_rng(29)
+            grain = 0.92 + 0.08 * rng.random((w, h))
+            rgb = np.array((10, 12, 16), np.float32) * (vignette * grain)[..., None]
+            self.backdrops[size] = pygame.surfarray.make_surface(np.clip(rgb, 0, 255).astype(np.uint8))
+        return self.backdrops[size]
+
+    def webs_layer(self, size):
+        if size not in self.webs:
+            w, h = size
+            layer = pygame.Surface(size, pygame.SRCALPHA)
+            layer.fill((0, 0, 0, 0))
+
+            web_size = (int(w * 0.7), int(w * 0.7))
+            web_img = self.scaled_asset("spider-web.png", web_size)
+
+            layer.blit(web_img, (-int(w * 0.1), -int(h * 0.1)))
+            web_right = pygame.transform.flip(web_img, True, False)
+            layer.blit(web_right, (w - int(w * 0.6), -int(h * 0.1)))
+
+            self.webs[size] = layer
+        return self.webs[size]
+
+    def draw_small_spider(self, surf, px, py, size, phase):
+        pygame.draw.circle(surf, (25, 27, 32), (round(px), round(py)), max(1, round(size)))
+        for side in (-1, 1):
+            for i in range(4):
+                ang = (-0.8 + i * 0.5) * side
+                leg_len = size * 2.2
+                wiggle = math.sin(phase + i * 1.6) * size * 0.5
+                lx = px + math.cos(ang) * leg_len * side
+                ly = py + math.sin(ang) * leg_len + wiggle
+                pygame.draw.line(surf, (20, 22, 26), (px, py), (lx, ly), 1)
+
+    def draw(self, surf, i):
+        size = surf.get_size()
+        surf.blit(self.backdrop(size), (0, 0))
+        surf.blit(self.webs_layer(size), (0, 0))
+        to_px, ppm = self.projection(size, i)
+        ex = self.geometry.eye_x[i]
+
+        for s in self.small_spiders:
+            if s["w"] != i:
+                continue
+            px, py = to_px(s["x"], s["y"])
+            self.draw_small_spider(surf, px, py, s["size"], s["phase"])
+
+        if abs(self.x - ex) < self.window_width / 2 + 0.6:
+            cx, cy = to_px(self.x, self.y)
+            scale = ppm * 0.0035
+
+            j_x = random.uniform(-2, 2) * self.aggro if self.aggro > 0.3 else 0
+            j_y = random.uniform(-2, 2) * self.aggro if self.aggro > 0.3 else 0
+
+            pygame.draw.line(surf, (220, 230, 245, 180), (cx, 0), (cx, cy - 35 * scale), max(1, round(scale)))
+
+            sp_h = max(16, round(120 * scale))
+            sp_w = sp_h
+            spider_img = self.scaled_asset("spider-giant.png", (sp_w, sp_h))
+
+            sway_angle = math.sin(self.t * 3.5) * 4.0 if not self.dropping else math.sin(self.tap_phase) * 6.0
+            rotated_spider = pygame.transform.rotate(spider_img, sway_angle)
+
+            rect = rotated_spider.get_rect(center=(cx + j_x, cy + j_y))
+            surf.blit(rotated_spider, rect)
+
+            eye_col = (
+                int(120 + 135 * self.aggro),
+                int(200 * (1.0 - self.aggro * 0.8)),
+                int(40 * (1.0 - self.aggro))
+            )
+            if self.aggro > 0.1:
+                pygame.draw.circle(surf, (int(200 * self.aggro), 20, 10), (round(cx - 3 * scale + j_x), round(cy + 6 * scale + j_y)), max(2, round(8 * scale)))
+                pygame.draw.circle(surf, (int(200 * self.aggro), 20, 10), (round(cx + 3 * scale + j_x), round(cy + 6 * scale + j_y)), max(2, round(8 * scale)))
+
+            pygame.draw.circle(surf, eye_col, (round(cx - 4 * scale + j_x), round(cy + 5 * scale + j_y)), max(1, round(2.5 * scale)))
+            pygame.draw.circle(surf, eye_col, (round(cx + 4 * scale + j_x), round(cy + 5 * scale + j_y)), max(1, round(2.5 * scale)))
+
+
+class Director:
+    ROTATION = ("eyes", "hands", "figure", "breach", "spiders")
+
+    def __init__(self):
         self.current = None
         self.visitors_at = 0
 
     def pick(self, setting, brain):
         if setting != "auto":
             want = setting
-        elif 6 <= time.localtime().tm_hour < self.scary_from:
-            want = "pumpkins"
         elif self.current not in self.ROTATION:
             want = random.choice(self.ROTATION)
         elif brain.visitors - self.visitors_at >= 2 and brain.t - brain.last_seen > 10:
@@ -606,5 +1122,11 @@ class Director:
 
 
 def make_scene(name, geometry, window_width):
-    cls = {"hands": Hands, "figure": Figure, "pumpkins": Pumpkins}.get(name)
+    cls = {
+        "hands": Hands,
+        "figure": Figure,
+        "pumpkins": Pumpkins,
+        "breach": ContainmentBreach,
+        "spiders": SpiderNest,
+    }.get(name)
     return cls(geometry, window_width) if cls else None

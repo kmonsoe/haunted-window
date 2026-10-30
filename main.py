@@ -3,6 +3,7 @@ import json
 import math
 import os
 import random
+import subprocess
 import time
 
 import numpy as np
@@ -16,6 +17,27 @@ SDL_WINDOWPOS_CENTERED_DISPLAY = 0x2FFF0000
 SLEEP_AFTER = 45.0
 LOST_AFTER = 0.8
 ENVELOPE_RATE = 30
+HOME_WIFI = "Rabben 28"
+HOTSPOT_WIFI = "Hotspot"
+
+
+def min_pixels_for(sensitivity):
+    return round(100 - 90 * max(0.0, min(1.0, sensitivity)))
+
+
+def current_network():
+    try:
+        out = subprocess.run(
+            ["nmcli", "-t", "-f", "NAME", "connection", "show", "--active"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.splitlines()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if HOTSPOT_WIFI in out:
+        return "hotspot"
+    if HOME_WIFI in out:
+        return "home"
+    return None
 
 
 WAKE = {
@@ -421,6 +443,10 @@ class Sounds:
 def apply_action(action, arg, brain, sounds, settings):
     if action == "camera_flip":
         settings["camera_flip"] = bool(arg)
+    elif action == "eye_mirror":
+        settings["eye_mirror"] = bool(arg)
+    elif action == "sensitivity":
+        settings["sensitivity"] = max(0.0, min(1.0, float(arg)))
     elif action == "skin" and arg in ("gore", "pale"):
         settings["skin"] = arg
     elif action == "scene" and (arg == "auto" or arg in SCENES):
@@ -449,6 +475,8 @@ def apply_action(action, arg, brain, sounds, settings):
         sounds.toggle_music()
     elif action == "volume" and sounds.clips:
         sounds.set_volume(arg)
+    elif action == "hotspot":
+        subprocess.run(["sudo", "nmcli", "connection", "up", HOTSPOT_WIFI if arg else HOME_WIFI])
 
 
 def read_temp():
@@ -459,11 +487,12 @@ def read_temp():
         return None
 
 
-def status(brain, sounds, fps, camera_age, started, settings, scene):
+def status(brain, sounds, fps, camera_age, started, settings, scene, network):
     p = brain.person if brain.mode == "tracking" else None
     return {
         "settings": settings,
         "scene": scene,
+        "network": network,
         "mode": brain.mode,
         "script": brain.script_name,
         "person": None if p is None else {"x": round(p.x, 2), "z": round(p.z, 2), "head": round(p.head_y, 2)},
@@ -553,7 +582,13 @@ SETTINGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.js
 
 
 def load_settings(args):
-    settings = {"camera_flip": args.cam_flip, "skin": args.skin, "scene": args.scene}
+    settings = {
+        "camera_flip": args.cam_flip,
+        "eye_mirror": args.eye_mirror,
+        "sensitivity": args.sensitivity,
+        "skin": args.skin,
+        "scene": args.scene,
+    }
     try:
         with open(SETTINGS) as f:
             saved = json.load(f)
@@ -563,6 +598,10 @@ def load_settings(args):
             settings["scene"] = saved["scene"]
         if isinstance(saved.get("camera_flip"), bool):
             settings["camera_flip"] = saved["camera_flip"]
+        if isinstance(saved.get("eye_mirror"), bool):
+            settings["eye_mirror"] = saved["eye_mirror"]
+        if isinstance(saved.get("sensitivity"), (int, float)) and 0 <= saved["sensitivity"] <= 1:
+            settings["sensitivity"] = saved["sensitivity"]
     except (OSError, ValueError):
         pass
     return settings
@@ -677,6 +716,8 @@ def main():
     ap.add_argument("--hfov", type=float, default=102)
     ap.add_argument("--vfov", type=float, default=67)
     ap.add_argument("--threshold", type=float, default=18)
+    ap.add_argument("--eye-mirror", action="store_true", help="mirror which way the eyes look, if it's backwards for your setup")
+    ap.add_argument("--sensitivity", type=float, default=0.5, help="0-1; raise if motion shows but is never recognised as a person")
     ap.add_argument("--style", choices=["human", "demon"], default="human")
     ap.add_argument("--swap", action="store_true", help="swap which eye goes to which display")
     ap.add_argument("--cam-flip", action="store_true", help="camera mounted upside down")
@@ -691,8 +732,7 @@ def main():
     ap.add_argument("--skin", choices=["gore", "pale"], default="gore")
     ap.add_argument("--demon-dist", type=float, default=2.5, help="metres; closer than this turns the eyes demonic")
     ap.add_argument("--no-reflection", action="store_true")
-    ap.add_argument("--scene", choices=("auto",) + SCENES, default="auto", help="auto = pumpkins in the day, scary scenes rotate from --scary-from")
-    ap.add_argument("--scary-from", type=int, default=19, help="hour when auto mode switches from pumpkins to scary scenes")
+    ap.add_argument("--scene", choices=("auto",) + SCENES, default="auto", help="auto = rotate through the scary scenes")
     ap.add_argument("--window-width", type=float, default=1.0, help="metres of window covered by one projector image")
     ap.add_argument("--dashboard-port", type=int, default=8080, help="0 disables the web dashboard")
     ap.add_argument("--sounds", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds"))
@@ -711,12 +751,13 @@ def main():
         cls = PiCamera if args.source == "picam" else Webcam
         thread = TrackerThread(cls(args.camera, args.cam_hflip, args.cam_vflip), MotionTracker(args.threshold))
         thread.set_flip(settings["camera_flip"])
+        thread.tracker.min_pixels = min_pixels_for(settings["sensitivity"])
         thread.start()
     debug = Debug(geometry, thread is not None) if args.debug or args.source == "mouse" else None
 
     brain = Brain(geometry, args.sleep_after, args.demon_dist)
     sounds = Sounds(args.sounds, args.music_volume)
-    director = Director(args.scary_from)
+    director = Director()
     scene_name, scene = None, None
     dash = None
     if args.dashboard_port:
@@ -728,6 +769,8 @@ def main():
             print(f"no dashboard: {e}")
     started = time.monotonic()
     next_preview = 0.0
+    next_network_check = 0.0
+    network_state = current_network()
     clock = pygame.time.Clock()
     running = True
     while running:
@@ -743,6 +786,8 @@ def main():
             person = geometry.locate(blob) if blob else None
         else:
             person = debug.mouse_person()
+        if person is not None and settings["eye_mirror"]:
+            person.x = -person.x
 
         if dash:
             before = dict(settings)
@@ -752,8 +797,12 @@ def main():
                 save_settings(settings)
                 if thread:
                     thread.set_flip(settings["camera_flip"])
+                    thread.tracker.min_pixels = min_pixels_for(settings["sensitivity"])
                 if settings["skin"] != before["skin"]:
                     outputs = reopen_outputs(outputs, args, settings)
+        if time.monotonic() >= next_network_check:
+            next_network_check = time.monotonic() + 2.0
+            network_state = current_network()
         if not args.windowed and time.monotonic() >= next_display_check:
             next_display_check = time.monotonic() + 2.0
             current = pygame.display.get_desktop_sizes()
@@ -781,7 +830,7 @@ def main():
             debug.draw(brain, blob, frame, mask, clock.get_fps())
         if dash:
             age = time.monotonic() - thread.stamp if thread and thread.stamp else None
-            dash.publish(status(brain, sounds, clock.get_fps(), age, started, settings, scene_name), source, mask, blob.box if blob else None)
+            dash.publish(status(brain, sounds, clock.get_fps(), age, started, settings, scene_name, network_state), source, mask, blob.box if blob else None)
             now = time.monotonic()
             if dash.eye_viewers and now >= next_preview:
                 dash.publish_eyes(eyes_preview(outputs))

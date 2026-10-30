@@ -95,7 +95,7 @@
   .chip { flex: none; background: var(--bg); border-radius: 99px; padding: 6px 11px; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .chip b { color: var(--text); font-weight: 700; }
 
-  .scenes { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .scenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(68px, 1fr)); gap: 6px; }
   .scene {
     display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 2px 10px;
     border-radius: 14px; background: var(--bg); border: 1px solid transparent; font-size: 12px; letter-spacing: -.01em; font-weight: 500; color: var(--muted);
@@ -232,8 +232,10 @@
       <button class="scene" data-value="hands"><span>🖐</span>Hands</button>
       <button class="scene" data-value="figure"><span>👤</span>Figure</button>
       <button class="scene" data-value="pumpkins"><span>🎃</span>Pumpkins</button>
+      <button class="scene" data-value="breach"><span>⚠️</span>Breach</button>
+      <button class="scene" data-value="spiders"><span>🕷</span>Spiders</button>
     </div>
-    <p class="hint">Auto shows pumpkins in the day, then rotates eyes, hands and figure in the evening.</p>
+    <p class="hint">Auto shows pumpkins in the day, then rotates scary scenes in the evening.</p>
     <div class="controls" style="margin-top:12px">
       <button class="ctl" data-action="wake" data-toast="Waking up"><span>👁</span>Wake</button>
       <button class="ctl" data-action="sleep" data-toast="Going to sleep"><span>😴</span>Sleep</button>
@@ -267,7 +269,22 @@
       <div>Camera<p>Flip if it's mounted upside down</p></div>
       <div class="seg" data-setting="camera_flip"><button data-value="false">Normal</button><button data-value="true">Flipped</button></div>
     </div>
-    <p class="hint">Settings are kept after a restart.</p>
+    <div class="setting">
+      <div>Eye movement<p>Flip if visitors look mirrored on the glass</p></div>
+      <div class="seg" data-setting="eye_mirror"><button data-value="false">Normal</button><button data-value="true">Flipped</button></div>
+    </div>
+    <div class="setting">
+      <div>Detection sensitivity<p>Raise if it sees motion but never calls it a person</p></div>
+      <input type="range" id="sensitivity" min="0" max="1" step="0.05" aria-label="Detection sensitivity">
+    </div>
+    <div class="setting">
+      <div>Network<p>Switch to the Pi's own wifi when the house wifi can't reach you</p></div>
+      <div class="seg" id="networkSeg">
+        <button data-action="hotspot" data-arg="true" data-toast="Switching to hotspot — reconnect to HauntedWindow">Hotspot</button>
+        <button data-action="hotspot" data-arg="false" data-toast="Switching back to home wifi">Home wifi</button>
+      </div>
+    </div>
+    <p class="hint">This drops the current wifi connection, so reconnect your phone to the other network afterwards.</p>
   </section>
 
   <section class="card span">
@@ -296,7 +313,7 @@
 const $ = id => document.getElementById(id);
 const post = (action, arg) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, arg }) });
 const buzz = () => navigator.vibrate && navigator.vibrate(12);
-const SCENE_ICON = { eyes: "👁", hands: "🖐", figure: "👤", pumpkins: "🎃" };
+const SCENE_ICON = { auto: "🔁", eyes: "👁", hands: "🖐", figure: "👤", pumpkins: "🎃", breach: "⚠️", spiders: "🕷" };
 const MODE_TEXT = { tracking: "Someone's watching", idle: "Awake, nobody there", asleep: "Asleep" };
 
 let toastTimer;
@@ -324,7 +341,7 @@ function startTimer(btn, secs) {
 }
 
 document.querySelectorAll("[data-action]").forEach(b => b.addEventListener("click", () => {
-  post(b.dataset.action);
+  post(b.dataset.action, b.dataset.arg === undefined ? undefined : JSON.parse(b.dataset.arg));
   buzz();
   if (b.dataset.toast) toast(b.dataset.toast);
   if (b.dataset.secs) startTimer(b, +b.dataset.secs);
@@ -350,6 +367,13 @@ $("volume").addEventListener("input", e => {
   dragging = true;
   clearTimeout(volumeTimer);
   volumeTimer = setTimeout(() => { post("volume", +e.target.value); dragging = false; }, 150);
+});
+
+let sensitivityTimer, sensitivityDragging = false;
+$("sensitivity").addEventListener("input", e => {
+  sensitivityDragging = true;
+  clearTimeout(sensitivityTimer);
+  sensitivityTimer = setTimeout(() => { post("sensitivity", +e.target.value); sensitivityDragging = false; }, 150);
 });
 
 let view = "windows";
@@ -465,6 +489,9 @@ async function poll() {
       const v = String(s.settings[seg.dataset.setting]);
       seg.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.value === v));
     });
+    $("networkSeg").querySelectorAll("button").forEach(b => {
+      b.classList.toggle("on", s.network === (b.dataset.arg === "true" ? "hotspot" : "home"));
+    });
 
     $("cVisitors").textContent = s.visitors;
     $("cDistWrap").style.display = s.person ? "" : "none";
@@ -481,6 +508,7 @@ async function poll() {
     $("trackState").textContent = s.track ? (s.music_paused ? "Paused" : "Playing") : "Background music";
     $("musicBtn").textContent = s.music_paused ? "▶" : "⏸";
     if (!dragging && s.volume != null) $("volume").value = s.volume;
+    if (!sensitivityDragging && s.settings.sensitivity != null) $("sensitivity").value = s.settings.sensitivity;
     updateClips(s.clips, s.last_clip);
 
     if ($("details").open) {
