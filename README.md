@@ -10,8 +10,9 @@ Halloween scenes rear-projected onto windows that notice when people walk by. A 
 | **Hands** | Bloody hands slam against the glass, slide down, and leave smeared prints behind. |
 | **Figure** | A woman's silhouette in a nightgown wanders behind the glass, walks to your window and tilts her head. Come too close and she rushes the glass. |
 | **Pumpkins** | Two talking jack-o'-lanterns that lip-sync to the voice clips and follow visitors with their eyes. Friendly enough for daytime. |
-| **Breach** | A biohazard containment cell holding a massive horned beast. Warning beacons sweep and flash, claws slam against the glass with screen trauma, and fractures spiderweb across the window. |
-| **Spiders** | Cobweb-draped crypt windows where small spiders scurry across the glass, while a giant 8-eyed Matriarch stalks visitors and drops straight into their faces on a silk thread. |
+| **Breach** | The shadow of a horned beast paces behind the glass while a red alarm beacon sweeps the room. Up close, clawed hands slam the window and the glass cracks. |
+| **Spiders** | A lamp-lit room with cobwebs in the corners and small spiders walking across the glass. The shadow of a giant spider prowls behind them and rushes onto the window when someone comes close. |
+| **Kids** | Your own children as pale ghosts that drift closer as visitors approach, and rush the glass laughing. Needs `assets/kids/kid-1.png` and `kid-2.png` (cutouts with transparent background, kept out of git). |
 
 In `auto` mode it rotates through the scary scenes around visitors, any time of day.
 
@@ -36,7 +37,7 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 `--source mouse` simulates a visitor: move the mouse in the "street" window. On the Pi, `--source picam` (the default) uses the camera module through `picamera2`, and `--source webcam` uses OpenCV.
 
-A dashboard runs at `http://<host>:8080`. Use it to pick the scene, play sounds, trigger a scare and watch the tracker.
+A dashboard runs at `http://<host>:8080`. Use it to pick the scene, play sounds, trigger a scare and watch the tracker. Its Calibration section adjusts the scare distance, distance correction, window centres and heights, and picture width while the show runs. The values are saved to `settings.json` and override the command-line options.
 
 ### Useful options
 
@@ -44,7 +45,7 @@ A dashboard runs at `http://<host>:8080`. Use it to pick the scene, play sounds,
 - `--eye-height`, `--cam-height`, `--hfov`, `--vfov`: geometry used to place visitors
 - `--window-width`: metres of window covered by one projector image
 - `--hflip`: mirror the output for rear projection
-- `--scene auto|eyes|hands|figure|pumpkins|breach|spiders`
+- `--scene auto|eyes|hands|figure|pumpkins|breach|spiders|kids`
 
 ## Raspberry Pi service
 

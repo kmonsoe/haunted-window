@@ -142,6 +142,14 @@
   .setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
   .setting:first-of-type { border-top: 0; padding-top: 0; }
   .setting p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+  .cal { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 20px; }
+  @media (min-width: 560px) { .cal { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .cal label { display: block; padding: 10px 0 2px; border-top: 1px solid var(--line); }
+  .cal .top { display: flex; justify-content: space-between; gap: 8px; }
+  .cal output { color: var(--candle); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cal p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+  .cal input { width: 100%; }
+  .reset { margin-top: 12px; padding: 9px 14px; border-radius: 11px; background: var(--bg); color: var(--muted); font-weight: 500; font-size: 14px; }
   .seg { display: inline-flex; flex: none; background: var(--bg); border-radius: 11px; padding: 3px; gap: 3px; }
   .seg button { padding: 8px 12px; border-radius: 8px; font-size: 14px; color: var(--muted); font-weight: 500; }
   .seg button.on { background: var(--candle); color: #210d02; }
@@ -234,6 +242,7 @@
       <button class="scene" data-value="pumpkins"><span>🎃</span>Pumpkins</button>
       <button class="scene" data-value="breach"><span>⚠️</span>Breach</button>
       <button class="scene" data-value="spiders"><span>🕷</span>Spiders</button>
+      <button class="scene" data-value="kids"><span>👻</span>Kids</button>
     </div>
     <p class="hint">Auto shows pumpkins in the day, then rotates scary scenes in the evening.</p>
     <div class="controls" style="margin-top:12px">
@@ -288,6 +297,27 @@
   </section>
 
   <section class="card span">
+    <h2>Calibration <small>applies live</small></h2>
+    <div class="cal">
+      <label><div class="top"><span>Scare distance</span><output data-unit=" m"></output></div><p>Closer than this and the scenes attack</p>
+        <input type="range" data-cal="scare_dist" min="0.5" max="6" step="0.1" aria-label="Scare distance"></label>
+      <label><div class="top"><span>Distance correction</span><output data-unit="×"></output></div><p>Raise if visitors read as closer than they are</p>
+        <input type="range" data-cal="distance_scale" min="0.5" max="2" step="0.05" aria-label="Distance correction"></label>
+      <label><div class="top"><span>Left window centre</span><output data-unit=" m"></output></div><p>Metres from the camera as seen from the street, − is left</p>
+        <input type="range" data-cal="left_x" min="-4" max="4" step="0.02" aria-label="Left window centre"></label>
+      <label><div class="top"><span>Right window centre</span><output data-unit=" m"></output></div><p>Metres from the camera as seen from the street, + is right</p>
+        <input type="range" data-cal="right_x" min="-4" max="4" step="0.02" aria-label="Right window centre"></label>
+      <label><div class="top"><span>Window centre height</span><output data-unit=" m"></output></div><p>Height above the street of the middle of the picture</p>
+        <input type="range" data-cal="eye_height" min="0.5" max="3" step="0.02" aria-label="Window centre height"></label>
+      <label><div class="top"><span>Camera height</span><output data-unit=" m"></output></div><p>Height of the camera above the street</p>
+        <input type="range" data-cal="cam_height" min="0.3" max="3" step="0.02" aria-label="Camera height"></label>
+      <label><div class="top"><span>Picture width</span><output data-unit=" m"></output></div><p>How many metres of window one projector image covers</p>
+        <input type="range" data-cal="window_width" min="0.3" max="3" step="0.02" aria-label="Picture width"></label>
+    </div>
+    <button class="reset" data-action="calibration_reset" data-toast="Calibration reset">Reset to startup values</button>
+  </section>
+
+  <section class="card span">
     <details id="details">
       <summary>Details</summary>
       <div class="stats">
@@ -313,7 +343,7 @@
 const $ = id => document.getElementById(id);
 const post = (action, arg) => fetch("/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, arg }) });
 const buzz = () => navigator.vibrate && navigator.vibrate(12);
-const SCENE_ICON = { auto: "🔁", eyes: "👁", hands: "🖐", figure: "👤", pumpkins: "🎃", breach: "⚠️", spiders: "🕷" };
+const SCENE_ICON = { auto: "🔁", eyes: "👁", hands: "🖐", figure: "👤", pumpkins: "🎃", breach: "⚠️", spiders: "🕷", kids: "👻" };
 const MODE_TEXT = { tracking: "Someone's watching", idle: "Awake, nobody there", asleep: "Asleep" };
 
 let toastTimer;
@@ -375,6 +405,19 @@ $("sensitivity").addEventListener("input", e => {
   clearTimeout(sensitivityTimer);
   sensitivityTimer = setTimeout(() => { post("sensitivity", +e.target.value); sensitivityDragging = false; }, 150);
 });
+
+const calTimers = {}, calDragging = {};
+const showCal = (input, v) => {
+  const out = input.closest("label").querySelector("output");
+  out.textContent = (+v).toFixed(2).replace(/\.?0+$/, "") + out.dataset.unit;
+};
+document.querySelectorAll("[data-cal]").forEach(input => input.addEventListener("input", () => {
+  const key = input.dataset.cal;
+  calDragging[key] = true;
+  showCal(input, input.value);
+  clearTimeout(calTimers[key]);
+  calTimers[key] = setTimeout(() => { post("calibrate", { key, value: +input.value }); calDragging[key] = false; }, 150);
+}));
 
 let view = "windows";
 const streams = { windows: [$("vWindows"), "/eyes.mjpg"], camera: [$("vCamera"), "/camera.mjpg"] };
@@ -509,6 +552,12 @@ async function poll() {
     $("musicBtn").textContent = s.music_paused ? "▶" : "⏸";
     if (!dragging && s.volume != null) $("volume").value = s.volume;
     if (!sensitivityDragging && s.settings.sensitivity != null) $("sensitivity").value = s.settings.sensitivity;
+    document.querySelectorAll("[data-cal]").forEach(input => {
+      const v = s.settings[input.dataset.cal];
+      if (v == null || calDragging[input.dataset.cal]) return;
+      input.value = v;
+      showCal(input, v);
+    });
     updateClips(s.clips, s.last_clip);
 
     if ($("details").open) {

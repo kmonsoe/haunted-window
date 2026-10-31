@@ -17,8 +17,40 @@ SDL_WINDOWPOS_CENTERED_DISPLAY = 0x2FFF0000
 SLEEP_AFTER = 45.0
 LOST_AFTER = 0.8
 ENVELOPE_RATE = 30
+PERSON_HEIGHT = 1.7
 HOME_WIFI = "Rabben 28"
 HOTSPOT_WIFI = "Hotspot"
+
+
+CALIBRATION = {
+    "left_x": (-4.0, 4.0),
+    "right_x": (-4.0, 4.0),
+    "eye_height": (0.5, 3.0),
+    "cam_height": (0.3, 3.0),
+    "window_width": (0.3, 3.0),
+    "scare_dist": (0.5, 6.0),
+    "distance_scale": (0.5, 2.0),
+}
+
+
+def calibration_defaults(args):
+    return {
+        "left_x": args.eye_x[0],
+        "right_x": args.eye_x[1],
+        "eye_height": args.eye_height,
+        "cam_height": args.cam_height,
+        "window_width": args.window_width,
+        "scare_dist": args.demon_dist,
+        "distance_scale": 1.0,
+    }
+
+
+def calibrate(settings, geometry, brain):
+    geometry.eye_x[:] = [settings["left_x"], settings["right_x"]]
+    geometry.eye_height = settings["eye_height"]
+    geometry.cam_height = settings["cam_height"]
+    geometry.person_height = PERSON_HEIGHT * settings["distance_scale"]
+    brain.demon_dist = settings["scare_dist"]
 
 
 def min_pixels_for(sensitivity):
@@ -451,6 +483,11 @@ def apply_action(action, arg, brain, sounds, settings):
         settings["skin"] = arg
     elif action == "scene" and (arg == "auto" or arg in SCENES):
         settings["scene"] = arg
+    elif action == "calibrate" and isinstance(arg, dict) and arg.get("key") in CALIBRATION:
+        lo, hi = CALIBRATION[arg["key"]]
+        settings[arg["key"]] = round(max(lo, min(hi, float(arg["value"]))), 3)
+    elif action == "calibration_reset":
+        settings.update(settings["defaults"])
     elif action == "laugh":
         sounds.laugh()
     elif action == "say" and sounds.clips:
@@ -588,6 +625,7 @@ def load_settings(args):
         "sensitivity": args.sensitivity,
         "skin": args.skin,
         "scene": args.scene,
+        **calibration_defaults(args),
     }
     try:
         with open(SETTINGS) as f:
@@ -602,6 +640,9 @@ def load_settings(args):
             settings["eye_mirror"] = saved["eye_mirror"]
         if isinstance(saved.get("sensitivity"), (int, float)) and 0 <= saved["sensitivity"] <= 1:
             settings["sensitivity"] = saved["sensitivity"]
+        for key, (lo, hi) in CALIBRATION.items():
+            if isinstance(saved.get(key), (int, float)) and lo <= saved[key] <= hi:
+                settings[key] = saved[key]
     except (OSError, ValueError):
         pass
     return settings
@@ -610,7 +651,7 @@ def load_settings(args):
 def save_settings(settings):
     try:
         with open(SETTINGS, "w") as f:
-            json.dump(settings, f)
+            json.dump({k: v for k, v in settings.items() if k != "defaults"}, f)
     except OSError as e:
         print(f"could not save settings: {e}")
 
@@ -756,6 +797,8 @@ def main():
     debug = Debug(geometry, thread is not None) if args.debug or args.source == "mouse" else None
 
     brain = Brain(geometry, args.sleep_after, args.demon_dist)
+    settings["defaults"] = calibration_defaults(args)
+    calibrate(settings, geometry, brain)
     sounds = Sounds(args.sounds, args.music_volume)
     director = Director()
     scene_name, scene = None, None
@@ -800,6 +843,9 @@ def main():
                     thread.tracker.min_pixels = min_pixels_for(settings["sensitivity"])
                 if settings["skin"] != before["skin"]:
                     outputs = reopen_outputs(outputs, args, settings)
+                calibrate(settings, geometry, brain)
+                if any(settings[k] != before[k] for k in ("left_x", "right_x", "eye_height", "window_width")):
+                    scene_name = None
         if time.monotonic() >= next_network_check:
             next_network_check = time.monotonic() + 2.0
             network_state = current_network()
@@ -819,7 +865,7 @@ def main():
                 st.reflection = refl
         name = director.pick(settings["scene"], brain)
         if name != scene_name:
-            scene_name, scene = name, make_scene(name, geometry, args.window_width)
+            scene_name, scene = name, make_scene(name, geometry, settings["window_width"])
             print(f"scene: {name}")
         if scene:
             scene.update(dt, brain, sounds)
